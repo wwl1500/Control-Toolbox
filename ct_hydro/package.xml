@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>ct_hydro</name>
+  <version>0.1.0</version>
+  <description>Hydrodynamics utilities for the Control Toolbox.</description>
+  <maintainer email="control-toolbox-dev@googlegroups.com">Control Toolbox Developers</maintainer>
+  <license>BSD-2-Clause</license>
+</package>

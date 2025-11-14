@@ -18,7 +18,7 @@ endif()
 
 add_executable(ex_underwater_double_link UnderwaterDoubleLinkExample.cpp)
 target_include_directories(ex_underwater_double_link PUBLIC ${ct_models_target_include_dirs})
-target_link_libraries(ex_underwater_double_link ct_core)
+target_link_libraries(ex_underwater_double_link ct_core ct_hydro)
 
 include(GNUInstallDirs)
 install(

@@ -51,6 +51,7 @@ fi
 build_module ct_core $BUILD_FLAGS
 build_module ct_optcon $BUILD_FLAGS
 build_module ct_rbd $BUILD_FLAGS 
+build_module ct_hydro $BUILD_FLAGS
 build_module ct_models $BUILD_FLAGS
 
 exit 0

@@ -17,17 +17,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 if(NOT TARGET ${ct_rbd})
 	find_package(ct_rbd REQUIRED)
 endif()
+if(NOT TARGET ${ct_hydro})
+	find_package(ct_hydro REQUIRED)
+endif()
 find_package(Boost REQUIRED system filesystem)
 
 # extract interface compile definitions from previous ct packages as options
 importInterfaceCompileDefinitionsAsOptions(ct_core)
 importInterfaceCompileDefinitionsAsOptions(ct_optcon)
 importInterfaceCompileDefinitionsAsOptions(ct_rbd)
+importInterfaceCompileDefinitionsAsOptions(ct_hydro)
 
 
 ## define the directories to be included in all ct_rbd targets
 set(ct_models_target_include_dirs
     ${ct_rbd_INCLUDE_DIRS}
+    ${ct_hydro_INCLUDE_DIRS}
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )

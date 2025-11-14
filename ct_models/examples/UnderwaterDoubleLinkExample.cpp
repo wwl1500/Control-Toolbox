@@ -1,7 +1,9 @@
 #include <ct/core/core.h>
+#include <ct/hydro/hydro.h>
 
 #include <Eigen/Dense>
 #include <iostream>
+#include <memory>
 #include <cmath>
 
 namespace
@@ -24,10 +26,23 @@ public:
     {
         // 计算转动惯量
         J_ = (1.0 / 3.0) * m_ * l_ * l_;
-        
-        // 设置环境流速
-        v_c_ << 0.1, 0.1;  // [0.1, 0.1]^T m/s
-        
+
+        hydro_params_.added_mass_normal = 0.3958;
+        hydro_params_.drag_tangential = 0.2639;
+        hydro_params_.drag_normal = 8.4;
+        hydro_params_.torque_added_mass = 4.3103e-4;
+        hydro_params_.torque_linear_damping = 2.2629e-5;
+        hydro_params_.torque_nonlinear_damping = 2.2988e-7;
+        hydro_params_.current_velocity << 0.1, 0.1;
+
+        hydro_force_ = std::make_shared<ct::hydro::HydroForceComposite<double>>();
+        hydro_force_->addForce(std::make_shared<ct::hydro::AddedMassForce<double>>());
+        hydro_force_->addForce(std::make_shared<ct::hydro::DragForce<double>>());
+        hydro_torque_.setCoefficients(
+            hydro_params_.torque_added_mass,
+            hydro_params_.torque_linear_damping,
+            hydro_params_.torque_nonlinear_damping);
+
         D_ << 1.0, -1.0;
         A_ << 1.0, 1.0;
         e_ << 1.0, 1.0;
@@ -69,100 +84,51 @@ public:
 
         Eigen::Vector2d thetaDotSq = thetaDot.array().square().matrix();
 
-        Eigen::Matrix2d Lambda1 = lambda1_ * Eigen::Matrix2d::Identity();
-        Eigen::Matrix2d Lambda2 = lambda2_ * Eigen::Matrix2d::Identity();
-
         Eigen::Matrix2d Mtheta = J_ * Eigen::Matrix2d::Identity();
         Mtheta += m_ * l_ * l_ * (S_theta * V_ * S_theta + C_theta * V_ * C_theta);
-        Mtheta += Lambda1;
-        Mtheta += l_ * l_ * (S_theta * K_ * (mu_n_ * S_theta_sq) * H_ * S_theta +
-                             S_theta * K_ * (mu_n_ * S_thetaC_theta) * H_ * C_theta +
-                             C_theta * K_ * (mu_n_ * S_thetaC_theta) * H_ * S_theta +
-                             C_theta * K_ * (mu_n_ * C_theta_sq) * H_ * C_theta);
+        Mtheta += hydro_torque_.addedMassGain() * Eigen::Matrix2d::Identity();
+        Mtheta += l_ * l_ * (S_theta * K_ * (hydro_params_.added_mass_normal * S_theta_sq) * H_ * S_theta +
+                             S_theta * K_ * (hydro_params_.added_mass_normal * S_thetaC_theta) * H_ * C_theta +
+                             C_theta * K_ * (hydro_params_.added_mass_normal * S_thetaC_theta) * H_ * S_theta +
+                             C_theta * K_ * (hydro_params_.added_mass_normal * C_theta_sq) * H_ * C_theta);
 
         Eigen::Matrix2d Wtheta = m_ * l_ * l_ * (S_theta * V_ * C_theta - C_theta * V_ * S_theta);
-        Wtheta += l_ * l_ * (S_theta * K_ * (mu_n_ * S_theta_sq) * H_ * C_theta -
-                             S_theta * K_ * (mu_n_ * S_thetaC_theta) * H_ * S_theta +
-                             C_theta * K_ * (mu_n_ * S_thetaC_theta) * H_ * C_theta -
-                             C_theta * K_ * (mu_n_ * C_theta_sq) * H_ * S_theta);
+        Wtheta += l_ * l_ * (S_theta * K_ * (hydro_params_.added_mass_normal * S_theta_sq) * H_ * C_theta -
+                             S_theta * K_ * (hydro_params_.added_mass_normal * S_thetaC_theta) * H_ * S_theta +
+                             C_theta * K_ * (hydro_params_.added_mass_normal * S_thetaC_theta) * H_ * C_theta -
+                             C_theta * K_ * (hydro_params_.added_mass_normal * C_theta_sq) * H_ * S_theta);
 
-        Eigen::Matrix2d Vtheta = Lambda2;
+        Eigen::Matrix2d Vtheta = hydro_torque_.linearDampingGain() * Eigen::Matrix2d::Identity();
 
         Eigen::Vector2d dotX = computeDotX(theta, thetaDot);
         Eigen::Vector2d dotY = computeDotY(theta, thetaDot);
 
-        // 计算相对速度（考虑环境流速）
-        // 将环境流速从惯性系转换到各连杆坐标系
-        Eigen::Vector2d v_c1, v_c2;  // 环境流速在各连杆坐标系中的表示
-        v_c1(0) = std::cos(theta(0)) * v_c_(0) + std::sin(theta(0)) * v_c_(1);
-        v_c1(1) = -std::sin(theta(0)) * v_c_(0) + std::cos(theta(0)) * v_c_(1);
-        v_c2(0) = std::cos(theta(1)) * v_c_(0) + std::sin(theta(1)) * v_c_(1);
-        v_c2(1) = -std::sin(theta(1)) * v_c_(0) + std::cos(theta(1)) * v_c_(1);
+        ct::hydro::HydroKinematics<double> hydro_state;
+        hydro_state.theta = theta;
+        hydro_state.thetaDot = thetaDot;
+        hydro_state.velocityX = dotX;
+        hydro_state.velocityY = dotY;
+        hydro_state.accelerationX = Eigen::Vector2d::Zero();
+        hydro_state.accelerationY = Eigen::Vector2d::Zero();
 
-        // 相对速度 = 绝对速度 - 环境流速
-        Eigen::Vector2d dotX_rel, dotY_rel;
-        dotX_rel(0) = dotX(0) - v_c1(0);
-        dotY_rel(0) = dotY(0) - v_c1(1);
-        dotX_rel(1) = dotX(1) - v_c2(0);
-        dotY_rel(1) = dotY(1) - v_c2(1);
-
-        Eigen::Vector2d fDxI;
-        Eigen::Vector2d fDyI;
-        Eigen::Vector2d fDxII;
-        Eigen::Vector2d fDyII;
-
-        for (int i = 0; i < 2; ++i)
-        {
-            double s = sinTheta(i);
-            double c = cosTheta(i);
-
-            double diagXX = c_t_ * c * c + c_n_ * s * s;
-            double diagYY = c_t_ * s * s + c_n_ * c * c;
-            double offDiag = (c_t_ - c_n_) * s * c;
-
-            // 使用相对速度计算阻尼力
-            fDxI(i) = -(diagXX * dotX_rel(i) + offDiag * dotY_rel(i));
-            fDyI(i) = -(offDiag * dotX_rel(i) + diagYY * dotY_rel(i));
-
-            double vRx = c * dotX_rel(i) + s * dotY_rel(i);
-            double vRy = -s * dotX_rel(i) + c * dotY_rel(i);
-
-            double signVrx = (vRx > 0.0) - (vRx < 0.0);
-            double signVry = (vRy > 0.0) - (vRy < 0.0);
-
-            fDxII(i) = -(c_t_ * c * signVrx * vRx * vRx - c_n_ * s * signVry * vRy * vRy);
-            fDyII(i) = -(c_t_ * s * signVrx * vRx * vRx + c_n_ * c * signVry * vRy * vRy);
-        }
-
-        Eigen::Vector2d fDx = fDxI + fDxII;
-        Eigen::Vector2d fDy = fDyI + fDyII;
-
-        Eigen::Vector2d lambda3Term = lambda3_ * thetaDot.cwiseAbs().cwiseProduct(thetaDot);
+        const auto hydro_drag = hydro_force_->compute(hydro_state, hydro_params_);
+        Eigen::Vector2d lambda3Term = hydro_torque_.nonlinearDamping(thetaDot);
 
         Eigen::Vector2d rhs = -(Wtheta * thetaDotSq) - (Vtheta * thetaDot) - lambda3Term +
-                              l_ * (S_theta * K_ * fDx) - l_ * (C_theta * K_ * fDy);
+                              l_ * (S_theta * K_ * hydro_drag.fx) - l_ * (C_theta * K_ * hydro_drag.fy);
 
         Eigen::Vector2d thetaAcc = Mtheta.fullPivLu().solve(rhs);
 
         Eigen::Vector2d ddotX = l_ * H_ * (C_theta * thetaDotSq + S_theta * thetaAcc);
         Eigen::Vector2d ddotY = l_ * H_ * (S_theta * thetaDotSq - C_theta * thetaAcc);
 
-        Eigen::Vector2d fAx;
-        Eigen::Vector2d fAy;
-        for (int i = 0; i < 2; ++i)
-        {
-            double s = sinTheta(i);
-            double c = cosTheta(i);
-            fAx(i) = -(mu_n_ * s * s * ddotX(i) - mu_n_ * s * c * ddotY(i));
-            fAy(i) = -(-mu_n_ * s * c * ddotX(i) + mu_n_ * c * c * ddotY(i));
-        }
-
-        Eigen::Vector2d totalFx = fAx + fDx;
-        Eigen::Vector2d totalFy = fAy + fDy;
+        hydro_state.accelerationX = ddotX;
+        hydro_state.accelerationY = ddotY;
+        const auto hydro_total = hydro_force_->compute(hydro_state, hydro_params_);
 
         Eigen::Vector2d pAcc;
-        pAcc(0) = totalFx.sum() / (2.0 * m_);
-        pAcc(1) = totalFy.sum() / (2.0 * m_);
+        pAcc(0) = hydro_total.fx.sum() / (2.0 * m_);
+        pAcc(1) = hydro_total.fy.sum() / (2.0 * m_);
 
         derivative.template segment<2>(0) = thetaDot;
         derivative.template segment<2>(2) = pDot;
@@ -171,19 +137,13 @@ public:
     }
 
 private:
-    // 根据论文参数设置
     double m_ = 0.6597;  // 每个连杆质量 (kg)
     double l_ = 0.14;    // 半长 (m)
     double J_;            // 转动惯量，将在构造函数中计算
-    double lambda1_ = 4.3103e-4;   // 流体扭矩参数（附加质量）
-    double lambda2_ = 2.2629e-5;   // 流体扭矩参数（线性阻尼）
-    double lambda3_ = 2.2988e-7;   // 流体扭矩参数（非线性阻尼）
-    double mu_n_ = 0.3958;          // 法向附加质量参数
-    double c_t_ = 0.2639;           // 切向阻尼系数
-    double c_n_ = 8.4;              // 法向阻尼系数
-    
-    // 环境流速 (m/s)
-    Eigen::Vector2d v_c_;
+
+    ct::hydro::HydroParameters<double> hydro_params_{};
+    std::shared_ptr<ct::hydro::HydroForceComposite<double>> hydro_force_{};
+    ct::hydro::FluidTorque<double> hydro_torque_{};
 
     Eigen::RowVector2d D_;
     Eigen::RowVector2d A_;
